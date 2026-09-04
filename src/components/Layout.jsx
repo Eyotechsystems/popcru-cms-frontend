@@ -12,13 +12,18 @@ const ROLE_LABEL = {
 };
 
 const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Overview', icon: LayoutDashboard },
-  { to: '/cases', label: 'Cases', icon: FileText },
-  { to: '/members', label: 'Members', icon: Users },
+  { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, roles: null },
+  { to: '/cases', label: 'Cases', icon: FileText, roles: null },
+  // Hidden for Attorneys: the member directory isn't scoped to their
+  // assigned cases the way case data is (FR 4.3.7 restricts an
+  // Attorney to name + case reference only) — worth a proper backend
+  // fix too, this is a UI-level reduction in the meantime.
+  { to: '/members', label: 'Members', icon: Users, roles: ['system_admin', 'coordinator', 'manager', 'practitioner'] },
 ];
 
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
+  const navItems = NAV_ITEMS.filter((item) => !item.roles || item.roles.includes(user?.role));
 
   return (
     <div className="min-h-screen bg-paper flex">
@@ -29,7 +34,7 @@ export default function Layout({ children }) {
         </div>
 
         <nav className="flex flex-col gap-1 px-3 mt-2">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

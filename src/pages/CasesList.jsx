@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Plus, MapPin, ChevronRight, ChevronLeft } from 'lucide-react';
 import { api } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
 import FlameMark from '../components/FlameMark';
 import StatusBadge from '../components/StatusBadge';
@@ -18,6 +19,8 @@ const STATUS_OPTIONS = [
 
 export default function CasesList() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canCreate = ['coordinator', 'manager', 'system_admin'].includes(user?.role);
   const [cases, setCases] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -48,10 +51,12 @@ export default function CasesList() {
           <h1 className="font-display text-2xl font-bold">All Cases</h1>
           <p className="text-sm text-slate mt-0.5">{total} case{total === 1 ? '' : 's'} total</p>
         </div>
-        <button onClick={() => setShowNewCase(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded text-sm font-semibold text-white bg-ember">
-          <Plus size={16} /> New Case
-        </button>
+        {canCreate && (
+          <button onClick={() => setShowNewCase(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded text-sm font-semibold text-white bg-ember">
+            <Plus size={16} /> New Case
+          </button>
+        )}
       </div>
 
       <div className="flex items-center gap-3 mb-4">

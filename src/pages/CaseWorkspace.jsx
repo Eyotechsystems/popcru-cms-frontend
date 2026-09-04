@@ -2,22 +2,14 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Send, Upload, FileText, Download, Clock,
-  Gavel, History, MessageSquare, User,
+  Gavel, History, MessageSquare, User, Receipt, CalendarClock,
+  MessageCircleWarning, Plus,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
 import FlameMark from '../components/FlameMark';
 import StatusBadge from '../components/StatusBadge';
-
-const TABS = [
-  { key: 'overview', label: 'Overview', icon: User },
-  { key: 'notes', label: 'Notes', icon: FileText },
-  { key: 'documents', label: 'Documents', icon: Upload },
-  { key: 'messages', label: 'Messages', icon: MessageSquare },
-  { key: 'court', label: 'Court Updates', icon: Gavel },
-  { key: 'history', label: 'Allocation History', icon: History },
-];
 
 const timeAgo = (iso) => {
   const diff = (Date.now() - new Date(iso)) / 1000;
@@ -45,7 +37,31 @@ export default function CaseWorkspace() {
     api.get('/users/practitioners').then(setPractitioners).catch(() => setPractitioners([]));
   }, [load]);
 
-  const canEditCase = ['coordinator', 'manager', 'system_admin', 'practitioner'].includes(user?.role);
+  const role = user?.role;
+  const isAttorney = role === 'attorney';
+  const isManager = role === 'manager';
+  const canEditCase = ['coordinator', 'manager', 'system_admin', 'practitioner'].includes(role);
+  // Attorneys never see notes or allocation history — the backend
+  // doesn't even include them in the response for that role (FR 4.3.7).
+  const canSeeNotes = !isAttorney;
+  const canSeeHistory = !isAttorney;
+  // Invoices: submitting Attorney, Manager, Admin(=coordinator) — matches
+  // the backend's authorize() list on GET /cases/:id/invoices.
+  const canSeeInvoices = ['attorney', 'manager', 'coordinator'].includes(role);
+  // Feedback: Manager only, per FR 4.3.20 — never shown to any other role.
+  const canSeeFeedback = isManager;
+
+  const TABS = [
+    { key: 'overview', label: 'Overview', icon: User, show: true },
+    { key: 'notes', label: 'Notes', icon: FileText, show: canSeeNotes },
+    { key: 'documents', label: 'Documents', icon: Upload, show: true },
+    { key: 'messages', label: 'Messages', icon: MessageSquare, show: true },
+    { key: 'appointments', label: 'Appointments', icon: CalendarClock, show: true },
+    { key: 'court', label: 'Court Updates', icon: Gavel, show: true },
+    { key: 'invoices', label: 'Invoices', icon: Receipt, show: canSeeInvoices },
+    { key: 'feedback', label: 'Feedback', icon: MessageCircleWarning, show: canSeeFeedback },
+    { key: 'history', label: 'Allocation History', icon: History, show: canSeeHistory },
+  ].filter((t) => t.show);
 
   if (error) {
     return (
@@ -86,12 +102,12 @@ export default function CaseWorkspace() {
         <StatusBadge status={c.status} />
       </div>
 
-      <div className="flex gap-1 mb-6 border-b border-slate-light">
+      <div className="flex gap-1 mb-6 border-b border-slate-light overflow-x-auto">
         {TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors"
+            className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap"
             style={{
               color: tab === t.key ? '#C4321F' : '#6B655C',
               borderBottom: tab === t.key ? '2px solid #C4321F' : '2px solid transparent',
@@ -106,11 +122,14 @@ export default function CaseWorkspace() {
       {tab === 'overview' && (
         <OverviewTab detail={detail} practitioners={practitioners} canEdit={canEditCase} onUpdated={load} />
       )}
-      {tab === 'notes' && <NotesTab caseId={id} notes={detail.notes} canEdit={canEditCase} onUpdated={load} />}
+      {tab === 'notes' && canSeeNotes && <NotesTab caseId={id} notes={detail.notes} canEdit={canEditCase} onUpdated={load} />}
       {tab === 'documents' && <DocumentsTab caseId={id} documents={detail.documents} onUpdated={load} />}
       {tab === 'messages' && <MessagesTab caseId={id} />}
-      {tab === 'court' && <CourtUpdatesTab updates={detail.courtUpdates} />}
-      {tab === 'history' && <HistoryTab history={detail.allocationHistory} />}
+      {tab === 'appointments' && <AppointmentsTab caseId={id} canCreate={canEditCase || isAttorney} />}
+      {tab === 'court' && <CourtUpdatesTab caseId={id} updates={detail.courtUpdates} isAttorney={isAttorney} onUpdated={load} />}
+      {tab === 'invoices' && canSeeInvoices && <InvoicesTab caseId={id} role={role} />}
+      {tab === 'feedback' && canSeeFeedback && <FeedbackTab caseId={id} />}
+      {tab === 'history' && canSeeHistory && <HistoryTab history={detail.allocationHistory} />}
     </Layout>
   );
 }
@@ -357,9 +376,68 @@ function MessagesTab({ caseId }) {
 }
 
 // ── Court Updates ────────────────────────────────────────────
-function CourtUpdatesTab({ updates }) {
+function CourtUpdatesTab({ caseId, updates, isAttorney, onUpdated }) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ court_name: '', hearing_date: '', update_text: '', outcome: '', next_date: '' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.update_text.trim()) return;
+    setBusy(true);
+    setErr('');
+    try {
+      await api.post('/attorney/court-update', { case_id: caseId, ...form });
+      setForm({ court_name: '', hearing_date: '', update_text: '', outcome: '', next_date: '' });
+      setShowForm(false);
+      onUpdated();
+    } catch (e2) {
+      setErr(e2.body?.error || 'Error adding court update.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg p-5" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+      {isAttorney && (
+        <div className="mb-5">
+          {!showForm ? (
+            <button onClick={() => setShowForm(true)} className="flex items-center gap-1.5 text-sm font-semibold text-ember">
+              <Plus size={15} /> Add Court Update
+            </button>
+          ) : (
+            <form onSubmit={submit} className="flex flex-col gap-2 border border-slate-light rounded-lg p-4">
+              <div className="grid grid-cols-2 gap-2">
+                <input value={form.court_name} onChange={set('court_name')} placeholder="Court / forum name"
+                  className="px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+                <input value={form.hearing_date} onChange={set('hearing_date')} type="date"
+                  className="px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+              </div>
+              <textarea value={form.update_text} onChange={set('update_text')} placeholder="What happened at the hearing..." rows={3} required
+                className="px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+              <div className="grid grid-cols-2 gap-2">
+                <input value={form.outcome} onChange={set('outcome')} placeholder="Outcome (optional)"
+                  className="px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+                <input value={form.next_date} onChange={set('next_date')} type="date" placeholder="Next date"
+                  className="px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+              </div>
+              {err && <p className="text-xs text-ember">{err}</p>}
+              <div className="flex gap-2 mt-1">
+                <button type="submit" disabled={busy} className="px-4 py-2 rounded text-sm font-semibold text-white bg-ember disabled:opacity-50">
+                  {busy ? 'Submitting…' : 'Submit Update'}
+                </button>
+                <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 rounded text-sm font-medium text-slate">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
       {(!updates || updates.length === 0) && <p className="text-sm text-slate text-center py-6">No court updates recorded.</p>}
       <div className="flex flex-col gap-4">
         {updates?.map((u) => (
@@ -368,6 +446,220 @@ function CourtUpdatesTab({ updates }) {
             <p className="text-sm mt-1">{u.update_text}</p>
             {u.outcome && <p className="text-xs text-slate mt-1">Outcome: {u.outcome}</p>}
             <p className="text-xs text-slate mt-1">{u.attorney_name} · {timeAgo(u.created_at)}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Invoices ─────────────────────────────────────────────────
+const INVOICE_STATUS_COLOR = { pending: '#E8B32D', approved: '#4B7A51', rejected: '#C4321F' };
+
+function InvoicesTab({ caseId, role }) {
+  const [invoices, setInvoices] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ invoice_number: '', amount: '', description: '' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const load = useCallback(() => {
+    api.get(`/cases/${caseId}/invoices`).then(setInvoices).catch(() => setInvoices([]));
+  }, [caseId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.amount) return;
+    setBusy(true);
+    setErr('');
+    try {
+      await api.post('/attorney/invoice', { case_id: caseId, ...form, amount: Number(form.amount) });
+      setForm({ invoice_number: '', amount: '', description: '' });
+      setShowForm(false);
+      load();
+    } catch (e2) {
+      setErr(e2.body?.error || 'Error submitting invoice.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const approve = async (invoiceId) => {
+    try {
+      await api.put(`/invoices/${invoiceId}/approve`);
+      load();
+    } catch (e2) {
+      alert(e2.body?.error || 'Error approving invoice.');
+    }
+  };
+
+  const canApprove = role === 'manager';
+
+  return (
+    <div className="bg-white rounded-lg p-5" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+      {role === 'attorney' && (
+        <div className="mb-5">
+          {!showForm ? (
+            <button onClick={() => setShowForm(true)} className="flex items-center gap-1.5 text-sm font-semibold text-ember">
+              <Plus size={15} /> Submit Invoice
+            </button>
+          ) : (
+            <form onSubmit={submit} className="flex flex-col gap-2 border border-slate-light rounded-lg p-4">
+              <div className="grid grid-cols-2 gap-2">
+                <input value={form.invoice_number} onChange={set('invoice_number')} placeholder="Invoice number"
+                  className="px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+                <input value={form.amount} onChange={set('amount')} type="number" step="0.01" placeholder="Amount (R)" required
+                  className="px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+              </div>
+              <textarea value={form.description} onChange={set('description')} placeholder="Description of work..." rows={2}
+                className="px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+              {err && <p className="text-xs text-ember">{err}</p>}
+              <div className="flex gap-2 mt-1">
+                <button type="submit" disabled={busy} className="px-4 py-2 rounded text-sm font-semibold text-white bg-ember disabled:opacity-50">
+                  {busy ? 'Submitting…' : 'Submit'}
+                </button>
+                <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 rounded text-sm font-medium text-slate">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
+
+      {invoices === null && <p className="text-sm text-slate text-center py-6">Loading…</p>}
+      {invoices?.length === 0 && <p className="text-sm text-slate text-center py-6">No invoices submitted for this case.</p>}
+      <div className="flex flex-col gap-2">
+        {invoices?.map((inv) => (
+          <div key={inv.id} className="flex items-center justify-between px-3 py-2.5 rounded border border-slate-light">
+            <div>
+              <p className="text-sm font-medium">{inv.invoice_number || 'Invoice'} — R{Number(inv.amount).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</p>
+              <p className="text-xs text-slate mt-0.5">{inv.attorney_name} · {timeAgo(inv.submitted_at)}</p>
+              {inv.description && <p className="text-xs text-slate mt-0.5">{inv.description}</p>}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="px-2 py-0.5 rounded text-xs font-medium"
+                style={{ background: `${INVOICE_STATUS_COLOR[inv.status] || '#6B655C'}1A`, color: INVOICE_STATUS_COLOR[inv.status] || '#6B655C' }}>
+                {inv.status}
+              </span>
+              {canApprove && inv.status === 'pending' && (
+                <button onClick={() => approve(inv.id)} className="text-xs font-semibold text-ember">Approve</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Member Feedback (Manager only) ──────────────────────────────
+function FeedbackTab({ caseId }) {
+  const [feedback, setFeedback] = useState(null);
+
+  useEffect(() => {
+    api.get(`/cases/${caseId}/feedback`).then(setFeedback).catch(() => setFeedback([]));
+  }, [caseId]);
+
+  return (
+    <div className="bg-white rounded-lg p-5" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+      <p className="text-xs text-slate bg-paper rounded px-3 py-2 mb-4">
+        Private member feedback — visible only to you as Manager.
+      </p>
+      {feedback === null && <p className="text-sm text-slate text-center py-6">Loading…</p>}
+      {feedback?.length === 0 && <p className="text-sm text-slate text-center py-6">No feedback submitted for this case.</p>}
+      <div className="flex flex-col gap-3">
+        {feedback?.map((f) => (
+          <div key={f.id} className="border-l-2 pl-3" style={{ borderColor: f.feedback_type === 'complaint' ? '#C4321F' : '#4B7A51' }}>
+            <p className="text-xs font-semibold uppercase" style={{ color: f.feedback_type === 'complaint' ? '#C4321F' : '#4B7A51' }}>
+              {f.feedback_type}{f.about_shop_steward ? ' · about Shop Steward' : ''}
+            </p>
+            <p className="text-sm mt-1">{f.feedback_text}</p>
+            <p className="text-xs text-slate mt-1">{timeAgo(f.submitted_at)}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Appointments ─────────────────────────────────────────────
+function AppointmentsTab({ caseId, canCreate }) {
+  const [appointments, setAppointments] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ title: '', location: '', start_time: '', end_time: '' });
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    api.get(`/cases/${caseId}/appointments`).then(setAppointments).catch(() => setAppointments([]));
+  }, [caseId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.title || !form.start_time || !form.end_time) return;
+    setBusy(true);
+    try {
+      await api.post(`/cases/${caseId}/appointments`, form);
+      setForm({ title: '', location: '', start_time: '', end_time: '' });
+      setShowForm(false);
+      load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-lg p-5" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+      {canCreate && (
+        <div className="mb-5">
+          {!showForm ? (
+            <button onClick={() => setShowForm(true)} className="flex items-center gap-1.5 text-sm font-semibold text-ember">
+              <Plus size={15} /> Schedule Appointment
+            </button>
+          ) : (
+            <form onSubmit={submit} className="flex flex-col gap-2 border border-slate-light rounded-lg p-4">
+              <input value={form.title} onChange={set('title')} placeholder="Title" required
+                className="px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+              <input value={form.location} onChange={set('location')} placeholder="Location (optional)"
+                className="px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+              <div className="grid grid-cols-2 gap-2">
+                <input value={form.start_time} onChange={set('start_time')} type="datetime-local" required
+                  className="px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+                <input value={form.end_time} onChange={set('end_time')} type="datetime-local" required
+                  className="px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+              </div>
+              <div className="flex gap-2 mt-1">
+                <button type="submit" disabled={busy} className="px-4 py-2 rounded text-sm font-semibold text-white bg-ember disabled:opacity-50">
+                  {busy ? 'Scheduling…' : 'Schedule'}
+                </button>
+                <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 rounded text-sm font-medium text-slate">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
+      {appointments?.length === 0 && <p className="text-sm text-slate text-center py-6">No appointments scheduled.</p>}
+      <div className="flex flex-col gap-2">
+        {appointments?.map((a) => (
+          <div key={a.id} className="flex items-start gap-3 px-3 py-2.5 rounded border border-slate-light">
+            <CalendarClock size={16} className="text-slate mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium">{a.title}</p>
+              <p className="text-xs text-slate mt-0.5">
+                {new Date(a.start_time).toLocaleString('en-ZA', { dateStyle: 'medium', timeStyle: 'short' })}
+                {a.location ? ` · ${a.location}` : ''}
+              </p>
+            </div>
           </div>
         ))}
       </div>
