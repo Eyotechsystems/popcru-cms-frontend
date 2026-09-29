@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Flame, LayoutDashboard, FileText, Users, LogOut } from 'lucide-react';
+import { Flame, LayoutDashboard, FileText, Users, UserCog, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const ROLE_LABEL = {
@@ -19,6 +19,9 @@ const NAV_ITEMS = [
   // Attorney to name + case reference only) — worth a proper backend
   // fix too, this is a UI-level reduction in the meantime.
   { to: '/members', label: 'Members', icon: Users, roles: ['system_admin', 'coordinator', 'manager', 'practitioner'] },
+  // Matches GET /users on the backend — System Admin has full control,
+  // Manager can view and set practitioner workload limits.
+  { to: '/users', label: 'Users', icon: UserCog, roles: ['system_admin', 'manager'] },
 ];
 
 export default function Layout({ children }) {

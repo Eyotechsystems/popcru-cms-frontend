@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import CasesList from './pages/CasesList';
 import CaseWorkspace from './pages/CaseWorkspace';
 import Members from './pages/Members';
+import UsersAdmin from './pages/UsersAdmin';
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
           <Route path="/cases" element={<ProtectedRoute><CasesList /></ProtectedRoute>} />
           <Route path="/cases/:id" element={<ProtectedRoute><CaseWorkspace /></ProtectedRoute>} />
           <Route path="/members" element={<ProtectedRoute><Members /></ProtectedRoute>} />
+          <Route path="/users" element={<ProtectedRoute><UsersAdmin /></ProtectedRoute>} />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
