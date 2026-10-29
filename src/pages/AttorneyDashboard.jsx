@@ -4,6 +4,7 @@ import { MapPin, ChevronRight, Gavel, Search } from 'lucide-react';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
 import StatusBadge, { STATUS_COLOR } from '../components/StatusBadge';
+import FlameMark from '../components/FlameMark';
 
 const CountUp = ({ value, duration = 700 }) => {
   const [display, setDisplay] = useState(0);
@@ -107,7 +108,7 @@ export default function AttorneyDashboard() {
             style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.05)', animationDelay: `${i * 50}ms` }}>
             <span className="absolute left-0 top-0 bottom-0 w-1" style={{ background: STATUS_COLOR[c.status] || '#6B655C' }} />
             <div className="flex items-start justify-between mb-2">
-              <p className="font-mono text-xs text-slate">{c.case_reference}</p>
+              <p className="font-mono text-xs text-slate flex items-center gap-1.5">{c.priority && <FlameMark priority={c.priority} size={14} />}{c.case_reference}</p>
               <StatusBadge status={c.status} />
             </div>
             <p className="font-display font-semibold">{c.member_name}</p>

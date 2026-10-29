@@ -120,7 +120,7 @@ export default function CaseWorkspace() {
       </div>
 
       {tab === 'overview' && (
-        <OverviewTab detail={detail} practitioners={practitioners} canEdit={canEditCase} onUpdated={load} />
+        <OverviewTab detail={detail} practitioners={practitioners} canAllocate={['coordinator', 'manager', 'system_admin'].includes(role)} canAssignAttorney={['practitioner', 'system_admin'].includes(role)} onUpdated={load} />
       )}
       {tab === 'notes' && canSeeNotes && <NotesTab caseId={id} notes={detail.notes} canEdit={canEditCase} onUpdated={load} />}
       {tab === 'documents' && <DocumentsTab caseId={id} documents={detail.documents} onUpdated={load} />}
@@ -135,7 +135,7 @@ export default function CaseWorkspace() {
 }
 
 // ── Overview ─────────────────────────────────────────────────
-function OverviewTab({ detail, practitioners, canEdit, onUpdated }) {
+function OverviewTab({ detail, practitioners, canAllocate, canAssignAttorney, onUpdated }) {
   const { case: c } = detail;
   const [assignTo, setAssignTo] = useState('');
   const [reason, setReason] = useState('');
@@ -178,7 +178,8 @@ function OverviewTab({ detail, practitioners, canEdit, onUpdated }) {
         )}
       </div>
 
-      {canEdit && (
+      <div className="flex flex-col gap-5">
+      {canAllocate && (
         <div className="bg-white rounded-lg p-5" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
           <h3 className="font-display text-sm font-semibold mb-3">
             {isReallocation ? 'Reallocate' : 'Allocate'} to Practitioner
@@ -200,6 +201,64 @@ function OverviewTab({ detail, practitioners, canEdit, onUpdated }) {
           {warning && <p className="text-xs mt-2 px-3 py-2 rounded bg-gold/10 border border-gold/30">⚠ {warning}</p>}
         </div>
       )}
+      {canAssignAttorney && <AttorneyAssignCard c={c} onUpdated={onUpdated} />}
+      </div>
+    </div>
+  );
+}
+
+// ── Escalate to an Attorney (FR 4.3.25: the Practitioner assigns) ──
+function AttorneyAssignCard({ c, onUpdated }) {
+  const [attorneys, setAttorneys] = useState(null);
+  const [attorneyId, setAttorneyId] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [done, setDone] = useState('');
+
+  useEffect(() => {
+    api.get('/users/attorneys').then(setAttorneys).catch(() => setAttorneys([]));
+  }, []);
+
+  const current = attorneys?.find((a) => a.id === c.current_attorney_id);
+
+  const assign = async () => {
+    if (!attorneyId) return;
+    setBusy(true); setErr(''); setDone('');
+    try {
+      await api.put(`/cases/${c.id}/assign-attorney`, { attorney_id: attorneyId, reason: reason || undefined });
+      setDone('Attorney assigned. The case is now marked as Referred.');
+      setAttorneyId(''); setReason('');
+      onUpdated();
+    } catch (e) {
+      setErr(e.body?.error || 'Error assigning attorney.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-lg p-5" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.04)', borderTop: '3px solid #E8B32D' }}>
+      <h3 className="font-display text-sm font-semibold mb-1 flex items-center gap-1.5">
+        <Gavel size={14} className="text-ember" /> {c.current_attorney_id ? 'Reassign Attorney' : 'Escalate to Attorney'}
+      </h3>
+      {c.current_attorney_id && (
+        <p className="text-xs text-slate mb-2">Currently assigned to <strong className="text-ink">{current?.name || 'an attorney'}</strong>.</p>
+      )}
+      <select value={attorneyId} onChange={(e) => setAttorneyId(e.target.value)}
+        className="w-full mt-1 px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember">
+        <option value="">{attorneys === null ? 'Loading…' : 'Select attorney...'}</option>
+        {attorneys?.map((a) => <option key={a.id} value={a.id}>{a.name}{a.province ? ` — ${a.province}` : ''}</option>)}
+      </select>
+      <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason / forum (optional)"
+        className="w-full mt-2 px-3 py-2 rounded text-sm border border-slate-light outline-none focus:border-ember" />
+      <button onClick={assign} disabled={!attorneyId || busy}
+        className="w-full mt-2 py-2 rounded text-sm font-semibold text-white bg-ember disabled:bg-slate-light disabled:text-slate">
+        {busy ? 'Assigning…' : c.current_attorney_id ? 'Reassign' : 'Assign Attorney'}
+      </button>
+      <p className="text-xs text-slate mt-2">Assigning marks the case as Referred and notifies the attorney.</p>
+      {err && <p className="text-xs text-ember mt-2">{err}</p>}
+      {done && <p className="text-xs text-green-700 mt-2">{done}</p>}
     </div>
   );
 }
